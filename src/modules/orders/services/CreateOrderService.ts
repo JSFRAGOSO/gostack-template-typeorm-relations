@@ -10,6 +10,7 @@ import IOrdersRepository from '../repositories/IOrdersRepository';
 interface IProduct {
   id: string;
   quantity: number;
+  price: number;
 }
 
 interface IRequest {
@@ -20,13 +21,71 @@ interface IRequest {
 @injectable()
 class CreateOrderService {
   constructor(
+    @inject('OrdersRepository')
     private ordersRepository: IOrdersRepository,
+    @inject('ProductsRepository')
     private productsRepository: IProductsRepository,
+    @inject('CustomersRepository')
     private customersRepository: ICustomersRepository,
   ) {}
 
   public async execute({ customer_id, products }: IRequest): Promise<Order> {
-    // TODO
+    const customer = await this.customersRepository.findById(customer_id);
+
+    if (!customer) throw new AppError('Customer does not exists');
+
+    const productsIds = products.map(product => ({
+      id: product.id,
+    }));
+
+    const findPriceProducts = await this.productsRepository.findAllById(
+      productsIds,
+    );
+
+    const productToSend = products.map(product => {
+      const checkIfProductExists = findPriceProducts.find(
+        p => p.id === product.id,
+      );
+
+      if (!checkIfProductExists) {
+        throw new AppError('Product does not exists');
+      } else {
+        if (product.quantity > checkIfProductExists.quantity)
+          throw new AppError('Not enough balance');
+        return {
+          product_id: checkIfProductExists.id,
+          quantity: product.quantity,
+          price: checkIfProductExists.price,
+        };
+      }
+    });
+
+    const productUpdate = products.map(product => {
+      const checkIfProductExists = findPriceProducts.find(
+        p => p.id === product.id,
+      );
+
+      if (!checkIfProductExists) throw new AppError('Product does not exists');
+
+      return {
+        product_id: checkIfProductExists.id,
+        quantity: checkIfProductExists.quantity - product.quantity,
+        price: checkIfProductExists.price,
+      };
+    });
+
+    const updateQuantity = productUpdate.map(product => {
+      return { id: product.product_id, quantity: product.quantity };
+    });
+
+    await this.productsRepository.updateQuantity(updateQuantity);
+
+    const order = await this.ordersRepository.create({
+      customer,
+      products: productToSend,
+    });
+
+    return order;
   }
 }
 
